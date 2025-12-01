@@ -1,0 +1,13 @@
+
+---
+
+# **7️⃣ GitHub Push Commands**
+
+```bash
+cd skin-lesion-detection
+git init
+git add .
+git commit -m "Initial commit: Skin Lesion Detection project"
+git branch -M main
+git remote add origin https://github.com/<YOUR_USERNAME>/skin-lesion-detection.git
+git push -u origin main
