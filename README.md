@@ -2,6 +2,16 @@
 
 A Deep Learning-based system for classifying skin lesions using **CNNs** and **transfer learning**.
 
+## 🧬 Skin Lesion Classes
+
+- Melanoma  
+- Melanocytic Nevus  
+- Basal Cell Carcinoma  
+- Actinic Keratosis  
+- Benign Keratosis  
+- Dermatofibroma  
+- Vascular Lesion  
+
 ## Features
 - Upload skin images and classify multiple lesion types
 - CNN model (ResNet18) with transfer learning
