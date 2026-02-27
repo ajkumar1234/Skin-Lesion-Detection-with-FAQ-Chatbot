@@ -1,30 +1,52 @@
 import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, classification_report
+
 from tensorflow.keras.layers import Input, GlobalAveragePooling2D, Dense, Concatenate
 from tensorflow.keras.applications import ResNet50, InceptionV3, EfficientNetB0
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.preprocessing import image
+
+# -----------------------------
+# 1️⃣ Model Building
+# -----------------------------
+
 input_shape = (128, 128, 3)
+
 resnet_model = ResNet50(weights='imagenet', include_top=False, input_shape=input_shape)
 inception_model = InceptionV3(weights='imagenet', include_top=False, input_shape=input_shape)
 efficientnet_model = EfficientNetB0(weights='imagenet', include_top=False, input_shape=input_shape)
-for layer in resnet_model.layers:
-    layer.trainable = False
 
-for layer in inception_model.layers:
-    layer.trainable = False
+# Freeze base models
+for model in [resnet_model, inception_model, efficientnet_model]:
+    model.trainable = False
 
-for layer in efficientnet_model.layers:
-    layer.trainable = False
 input_tensor = Input(shape=input_shape)
+
 resnet_features = GlobalAveragePooling2D()(resnet_model(input_tensor))
 inception_features = GlobalAveragePooling2D()(inception_model(input_tensor))
 efficientnet_features = GlobalAveragePooling2D()(efficientnet_model(input_tensor))
+
 x = Concatenate()([resnet_features, inception_features, efficientnet_features])
 x = Dense(256, activation='relu')(x)
 output = Dense(8, activation='softmax')(x)
+
 ensemble_model = Model(inputs=input_tensor, outputs=output)
-ensemble_model.compile(optimizer=Adam(lr=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+
+ensemble_model.compile(
+    optimizer=Adam(learning_rate=0.001),   # ✅ fixed (lr → learning_rate)
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+# -----------------------------
+# 2️⃣ Data Generator
+# -----------------------------
+
 datagen = ImageDataGenerator(
     rescale=1.0 / 255.0,
     rotation_range=20,
@@ -36,162 +58,84 @@ datagen = ImageDataGenerator(
     vertical_flip=True,
     fill_mode='nearest'
 )
+
 train_generator = datagen.flow_from_directory(
     'dataset/train',
-    target_size=input_shape[:2],
+    target_size=(128, 128),
     batch_size=32,
     class_mode='categorical'
 )
+
+validation_generator = datagen.flow_from_directory(   # ✅ was missing
+    'dataset/val',
+    target_size=(128, 128),
+    batch_size=32,
+    class_mode='categorical'
+)
+
+# -----------------------------
+# 3️⃣ Training
+# -----------------------------
+
 history = ensemble_model.fit(
     train_generator,
-    epochs=100,  
+    epochs=50,
     validation_data=validation_generator,
     verbose=1
 )
-import pickle
-from multiprocessing import Lock
 
-with open("model.pkl", "wb") as model_file:
-    pickle.dump(ensemble_model, model_file)
-    tf.saved_model.save(ensemble_model, 'ensemble_model')
-import matplotlib.pyplot as plt
+# -----------------------------
+# 4️⃣ Save Model (Correct Way)
+# -----------------------------
 
-plt.figure(figsize=(14, 6))
-plt.subplot(1, 2, 1)
-plt.plot(history.history['accuracy'], label='Training Accuracy')
+ensemble_model.save("ensemble_model.h5")  # ✅ Correct saving method
+
+# -----------------------------
+# 5️⃣ Plot Accuracy
+# -----------------------------
+
+plt.figure(figsize=(10,5))
+plt.plot(history.history['accuracy'], label='Train Accuracy')
 plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
-plt.xlabel('Epoch')
-plt.ylabel('Accuracy')
 plt.legend()
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import confusion_matrix, classification_report
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-tf.get_logger().setLevel('ERROR')
-batch_size = 32
-num_classes = 7 
+plt.show()
 
-loaded_model = tf.saved_model.load('ensemble_model')
+# -----------------------------
+# 6️⃣ Confusion Matrix
+# -----------------------------
 
-train_datagen = ImageDataGenerator(rescale=1.0 / 255.0)  
-train_generator = train_datagen.flow_from_directory(
-    'dataset/train',
-    target_size=(128, 128),
-    batch_size=batch_size,
-    class_mode='categorical',
-    shuffle=False 
-) 
+validation_generator.shuffle = False
+predictions = ensemble_model.predict(validation_generator)
 
-
-y_true = []
-y_pred = []
-
-for i in range(len(train_generator)):
-    batch_images, batch_labels = train_generator[i]
-    y_true.extend(np.argmax(batch_labels, axis=1))
-    
-   
-    batch_predictions = loaded_model(batch_images)
-    y_pred.extend(np.argmax(batch_predictions, axis=1))
+y_true = validation_generator.classes
+y_pred = np.argmax(predictions, axis=1)
 
 confusion_mtx = confusion_matrix(y_true, y_pred)
 
-plt.figure(figsize=(8, 6))
-sns.heatmap(confusion_mtx, annot=True, fmt='d', cmap='Blues',
-            xticklabels=['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','healthy skin','Melanocytic Nevi','melonama','Vascular skin lesion'],
-            yticklabels=['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','healthy skin','Melanocytic Nevi','melonama','Vascular skin lesion'])
-plt.xlabel('Predicted')
-plt.ylabel('True')
-plt.title('Confusion Matrix (Training Data)')
+plt.figure(figsize=(8,6))
+sns.heatmap(confusion_mtx, annot=True, fmt='d', cmap='Blues')
+plt.xlabel("Predicted")
+plt.ylabel("True")
 plt.show()
-print(classification_report(y_true, y_pred, target_names=['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','healthy skin','Melanocytic Nevi','melonama','Vascular skin lesion']))
-import numpy as np
-import tensorflow as tf
-from tensorflow.keras.preprocessing import image
-from tensorflow.keras.applications.resnet50 import preprocess_input
-tf.get_logger().setLevel('ERROR')
 
-#loaded_model = tf.compat.v2.saved_model.load('ensemble_model', None)
-loaded_model = tf.saved_model.load('ensemble_model')
+print(classification_report(y_true, y_pred))
 
-image_path = '4.jpg'  
+# -----------------------------
+# 7️⃣ Single Image Prediction
+# -----------------------------
 
-img = image.load_img(image_path, target_size=(128, 128))
+model = tf.keras.models.load_model("ensemble_model.h5")
+
+image_path = "4.jpg"
+img = image.load_img(image_path, target_size=(128,128))
 img_array = image.img_to_array(img)
-img_array = np.expand_dims(img_array, axis=0) 
-img_array = preprocess_input(img_array) 
+img_array = np.expand_dims(img_array, axis=0)
+img_array = img_array / 255.0   # ✅ match training rescaling
 
-predictions = loaded_model(img_array, training=False)  
+predictions = model.predict(img_array)
 
-class_labels = ['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','Melanocytic Nevi','healthy skin','melonama','Vascular skin lesion'] 
-predicted_class_index = np.argmax(predictions)
-predicted_class_label = class_labels[predicted_class_index]
+class_labels = list(train_generator.class_indices.keys())
+predicted_class = class_labels[np.argmax(predictions)]
 
-print("Predicted Class Label:", predicted_class_label)
-print("Class Probabilities:", predictions)
-plt.figure(figsize=(8, 6))
-sns.heatmap(confusion_mtx, annot=True, fmt='d', cmap='Blues',
-            xticklabels=['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','healthy skin','Melanocytic Nevi','melonama','Vascular skin lesion'],
-            yticklabels=['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','healthy skin','Melanocytic Nevi','melonama','Vascular skin lesion'])
-plt.xlabel('Predicted')
-plt.ylabel('True')
-plt.title('Confusion Matrix (Training Data)')
-plt.show()
-print(classification_report(y_true, y_pred, target_names=['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','healthy skin','Melanocytic Nevi','melonama','Vascular skin lesion']))
-import numpy as np
-import tensorflow as tf
-from tensorflow.keras.preprocessing import image
-from tensorflow.keras.applications.resnet50 import preprocess_input
-tf.get_logger().setLevel('ERROR')
-
-#loaded_model = tf.compat.v2.saved_model.load('ensemble_model', None)
-loaded_model = tf.saved_model.load('ensemble_model')
-
-image_path = '4.jpg'  
-
-img = image.load_img(image_path, target_size=(128, 128))
-img_array = image.img_to_array(img)
-img_array = np.expand_dims(img_array, axis=0) 
-img_array = preprocess_input(img_array) 
-img = image.load_img(image_path, target_size=(128, 128))
-img_array = image.img_to_array(img)
-img_array = np.expand_dims(img_array, axis=0) 
-img_array = preprocess_input(img_array) 
-plt.figure(figsize=(14, 6))
-plt.subplot(1, 2, 1)
-plt.plot(history.history['accuracy'], label='Training Accuracy')
-plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
-plt.xlabel('Epoch')
-plt.ylabel('Accuracy')
-plt.legend()
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import confusion_matrix, classification_report
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-tf.get_logger().setLevel('ERROR')
-batch_size = 32
-num_classes = 7 
-
-loaded_model = tf.saved_model.load('ensemble_model')
-
-train_datagen = ImageDataGenerator(rescale=1.0 / 255.0)  
-train_generator = train_datagen.flow_from_directory(
-    'dataset/train',
-    target_size=(128, 128),
-    batch_size=batch_size,
-    class_mode='categorical',
-class_labels = ['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','Melanocytic Nevi','healthy skin','melonama','Vascular skin lesion'] )
-predicted_class_index = np.argmax(predictions)
-predicted_class_label = class_labels[predicted_class_index]
-
-print("Predicted Class Label:", predicted_class_label)
-print("Class Probabilities:", predictions)
-plt.figure(figsize=(8, 6))
-sns.heatmap(confusion_mtx, annot=True, fmt='d', cmap='Blues',
-            xticklabels=['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','healthy skin','Melanocytic Nevi','melonama','Vascular skin lesion'],
-            yticklabels=['Actinic Keratoses', 'Basal Cell Carcinoma','Benign Keratosis', 'Dermatofibroma','healthy skin','Melanocytic Nevi','melonama','Vascular skin lesion'])
-plt.xlabel('Predicted')
-plt.ylabel('True')
-plt.title('Confusion Matrix (Training Data)')
+print("Predicted Class:", predicted_class)
+print("Probabilities:", predictions)
